@@ -1,0 +1,86 @@
+pipeline {
+    agent any 
+    tools {
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        SCANNER_HOME=tool 'sonar-server'
+    }
+    stages {
+        stage ('CW') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage ('checkout from git') {
+            steps {
+                git branch: 'main', changelog: false, poll: false, url: 'https://github.com/KISHOREKOPPARAPU/2048-game.git'
+            }
+        }
+         stage ('SONAR') {
+            steps {
+                script {
+                 withSonarQubeEnv('sonar-server') {
+                sh '''
+                $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=2048-game \
+                -Dsonar.sources=. \
+                -Dsonar.host.url=http://35.175.145.92:9000/ \
+                -Dsonar.login=squ_0760a34cf19c33ea312673bf77fbe2bde55fff25
+                '''
+                }
+                }
+            } 
+        }
+        stage ('QG') {
+            steps {
+                script {
+                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+            }
+        }
+        }
+        stage ('NPM') {
+            steps {
+                script {
+                sh 'npm install'
+            }
+        }
+        }
+        stage('OWASP Dependency Check') {
+            steps {
+                dependencyCheck additionalArguments: "--scan ./ --disableYarnAudit --disableNodeAudit", odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Trivy FS SCAN') {
+            steps {
+                sh "trivy fs . > trivy.txt"
+            }
+        }
+        stage ('Docker Build & Docker Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                    sh '''
+                    docker build -t 2048-game .
+                    docker tag 2048-game kopparapukishore/2048-game:latest
+                    docker push kopparapukishore/2048-game:latest
+                    '''
+                }
+                }
+            }
+        }
+        stage('TRIVY IMAGE') {
+            steps {
+                sh "trivy image kopparapukishore/2048-game:latest > TRIVYIMAGE.txt"
+            }
+       }
+       
+        stage ('2048-Game') {
+            steps {
+                sh 'docker run -d --name game -p 3000:3000 kopparapukishore/2048-game:latest'
+            }
+        }
+        
+}
+}
